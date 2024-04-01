@@ -1,0 +1,366 @@
+MINIKUBE
+Instalar servidor de métricas
+
+cd k8s-specs
+minikube start
+kubectl config 
+kubectl config  get-contexts
+kubectl create namespace metrics
+kubectl config  get-contexts
+kubectl config  current-context
+kubectl top nodes
+kubectl -n kube-system top pod
+minikube addons enable metrics-server
+kubectl -n kube-system rollout status deployment metrics-server
+kubectl top nodes
+
+NAME       CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%   
+minikube   481m         12%    1073Mi          13%  
+
+#Consumo de MEMORY
+
+kubectl -n kube-system top pod
+
+#Obtenga el uso de recursos de los pods usando --all-namespaces
+
+kubectl top pods --all-namespaces
+
+#Obtenga el uso de recursos de los pods usando --containers
+kubectl top pods \
+  --all-namespaces \
+  --containers
+
+#Raspe las métricas usando JSON#
+
+kubectl get \
+    --raw "/apis/metrics.k8s.io/v1beta1" \
+    | jq '.'
+
+kubectl get \
+    --raw "/apis/metrics.k8s.io/v1beta1/pods" \
+    | jq '.'
+
+kubectl top pods --all-namespaces --containers 
+
+#SCALING
+
+cat scaling/go-demo-5-no-sidecar-mem.yml
+
+kubectl apply \
+    -f scaling/go-demo-5-no-sidecar-mem.yml \
+    --record
+// kubectl apply -f scaling/go-demo-5-no-sidecar-mem.yml
+
+kubectl -n go-demo-5 \
+    rollout status \
+    deployment api
+
+# enumerara los pond co namespace
+kubectl -n go-demo-5 get pods
+
+NAME    READY STATUS  RESTARTS AGE
+api-... 1/1   Running 0        1m
+db-0    2/2   Running 0        1m
+
+Creación del StatefulSet y el Deployment
+
+La versión actual de la API de escalado horizontal de Kubernetes (HPA) en Kubernetes es la "v2beta2". Esta versión de la API de HPA se introdujo en Kubernetes v1.18 y es la versión recomendada y más actualizada de la API de HPA.
+kubectl apply \
+    -f scaling/go-demo-5-api-hpa.yml \
+    --record
+lista de recursos
+kubectl -n go-demo-5 get hpa
+
+NAME REFERENCE      TARGETS                      MINPODS MAXPODS REPLICAS AGE
+api  Deployment/api <unknown>/80%, <unknown>/80% 2       5       0        20s
+
+NAME REFERENCE      TARGETS          MINPODS MAXPODS REPLICAS AGE
+api  Deployment/api 38%/80%, 10%/80% 2       5       2        1m
+
+kubectl -n go-demo-5 describe hpa api
+...
+Events:
+... Message
+... -------
+... New size: 2; reason: Current number of replicas below Spec.MinReplicas
+
+kubectl -n go-demo-5 get pods
+La salida es la siguiente.
+
+NAME    READY STATUS  RESTARTS AGE
+api-... 1/1   Running 0        2m
+api-... 1/1   Running 0        6m
+db-0    2/2   Running 0        6m
+
+eliminar pods 
+kubectl delete all --all --namespace=go-demo-5
+
+lamamos a la segmentación StatefulSety dbque la cantidad mínima de réplicas debe ser 3.
+kubectl apply -f scaling/go-demo-5-db-hpa.yml 
+
+kubectl -n go-demo-5 get hpa
+
+NAME REFERENCE      TARGETS                      MINPODS MAXPODS REPLICAS AGE
+api  Deployment/api 41%/80%, 0%/80%              2       5       2        5m
+db   StatefulSet/db <unknown>/80%, <unknown>/80% 3       5       0        20s
+
+
+HPAse creó el segundo y que la utilización actual es unknown
+kubectl -n go-demo-5 describe hpa db
+
+no funciona
+
+Crear HPAcon nueva definición #
+...
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: db
+  namespace: go-demo-5
+spec:
+  ...
+  template:
+    ...
+    spec:
+      ...
+      - name: db-sidecar
+        ...
+        resources:
+          limits:
+            memory: "100Mi"
+            cpu: 0.2
+          requests:
+            memory: "50Mi"
+            cpu: 0.1
+...
+
+kubectl apply \
+    -f scaling/go-demo-5-no-hpa.yml \
+
+kubectl -n go-demo-5 get hpa
+
+NAME REFERENCE      TARGETS          MINPODS MAXPODS REPLICAS AGE
+api  Deployment/api 66%/80%, 10%/80% 2       5       2        16m
+db   StatefulSet/db 60%/80%, 4%/80%  3       5       3        10m
+
+kubectl -n go-demo-5 get pods
+NAME    READY STATUS  RESTARTS AGE
+api-... 1/1   Running 0        42m
+api-... 1/1   Running 0        46m
+db-0    2/2   Running 0        33m
+db-1    2/2   Running 0        33m
+db-2    2/2   Running 0        33m
+
+Sin requests, HPApuede calcular el porcentaje del uso real de la memoria.no 
+Uso de memoria real por encima del valor objetivo #
+cat scaling/go-demo-5-api-hpa-low-mem.yml
+
+apiVersion: autoscaling/v2beta1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api
+  namespace: go-demo-5
+spec:
+  ...
+  metrics:
+  ...
+  - type: Resource
+    resource:
+      name: memory
+      targetAverageUtilization: 10
+
+kubectl apply \
+    -f scaling/go-demo-5-api-hpa-low-mem.yml 
+
+kubectl -n go-demo-5 get hpa
+
+NAME REFERENCE      TARGETS          MINPODS MAXPODS REPLICAS AGE
+api  Deployment/api 49%/10%, 10%/80% 2       5       2        44m
+db   StatefulSet/db 64%/80%, 5%/80%  3       5       3        39m
+
+
+kubectl -n go-demo-5 describe hpa api
+...
+Events:
+... Message
+... -------
+... New size: 2; reason: Current number of replicas below Spec.MinReplicas
+... New size: 4; reason: memory resource utilization (percentage of request) above targe
+
+kubectl -n go-demo-5 describe hpa api
+...
+Events:
+... Message
+... -------
+... New size: 2; reason: Current number of replicas below Spec.MinReplicas
+... New size: 4; reason: memory resource utilization (percentage of request) above target
+... New size: 5; reason: memory resource utilization (percentage of request) above target
+
+Recibimos el mensaje que indica que el nuevo tamaño es ahora 5, lo que demuestra que HPAcontinuará escalando hasta que los recursos estén por debajo del objetivo o, como en nuestro caso, alcance la cantidad máxima de réplicas.
+
+kubectl -n go-demo-5 get pods
+
+NAME    READY STATUS  RESTARTS AGE
+api-... 1/1   Running 0        47m
+api-... 1/1   Running 0        51m
+api-... 1/1   Running 0        4m
+api-... 1/1   Running 0        4m
+api-... 1/1   Running 0        24s
+db-0    2/2   Running 0        38m
+db-1    2/2   Running 0        38m
+db-2    2/2   Running 0        38m
+
+
+HPAdebería comenzar a reducirse hasta alcanzar la cantidad mínima de réplicas.
+kubectl apply \
+    -f scaling/go-demo-5-api-hpa.yml \
+
+    kubectl -n go-demo-5 describe hpa api
+
+...
+Events:
+... Message
+... -------
+... New size: 2; reason: Current number of replicas below Spec.MinReplicas
+... New size: 4; reason: memory resource utilization (percentage of request) above target
+... New size: 5; reason: memory resource utilization (percentage of request) above target
+... New size: 3; reason: All metrics below target
+
+Si el número de réplicas es estático y no tiene intención de escalar (o desescalar) su aplicación
+StatefulSet y Deployment  son para cuando no quiere que escale su app
+
+HPA  no necesita declara replicas 
+
+Si planeamos cambiar la cantidad de réplicas en función de la memoria, la CPU u otras métricas
+ HorizontalPodAutoscaler
+
+ NO Declaramos réplicas si planeamos usar HPA con un Deployment o un StatefulSet
+
+ El servidor de métricas SI tiene un gráfico de Helm.
+
+ PARA observar los recursos de cada uno de los contenedores que constituyen un Pod.
+ --containers
+
+
+ Si la memoria y la CPU están configuradas al ochenta por ciento y el uso real de la 
+ memoria está por debajo de eso  ESCALA HACIA ABAJO
+
+ NODOS DE ESCALADO
+
+ Cluster Autoscalertiene un único propósito: ajustar el tamaño del clúster 
+ agregando o eliminando nodos
+
+export AWS_ACCESS_KEY_ID=
+
+export AWS_SECRET_ACCESS_KEY=
+
+export AWS_DEFAULT_REGION=us-west-2
+
+export NAME=devops25
+
+para instalar eksctl https://docs.aws.amazon.com/es_es/emr/latest/EMR-on-EKS-DevelopmentGuide/setting-up-eksctl.html
+mkdir -p cluster
+
+eksctl create cluster \
+    -n $NAME \
+    -r $AWS_DEFAULT_REGION \
+    --kubeconfig cluster/kubecfg-eks \
+    --node-type t2.small \
+    --nodes-max 9 \
+    --nodes-min 3 \
+    --asg-access \
+    --managed
+
+export KUBECONFIG=$PWD/cluster/kubecfg-eks
+
+##################
+# Metrics Server #
+##################
+
+kubectl create namespace metrics
+
+helm install metrics-server \
+    bitnami/metrics-server \
+    --version 6.2.17 \
+    --namespace metrics
+
+kubectl -n metrics \
+    rollout status \
+    deployment metrics-server
+
+#######################
+# Destroy the cluster #
+#######################
+
+IAM_ROLE=$(aws iam list-roles \
+    | jq -r ".Roles[] \
+    | select(.RoleName \
+    | startswith(\"eksctl-$NAME-nodegroup\")) \
+    .RoleName")
+
+echo $IAM_ROLE
+
+aws iam delete-role-policy \
+    --role-name $IAM_ROLE \
+    --policy-name $NAME-AutoScaling
+
+eksctl delete cluster -n $NAME
+
+#Configuración Cluster Autoscaleren EKS
+export NAME=devops25
+
+#permisos adicionales
+
+IAM_ROLE=$(aws iam list-roles \
+    | jq -r ".Roles[] \
+    | select(.RoleName \
+    | startswith(\"eksctl-$NAME-nodegroup\")) \
+    .RoleName")
+
+echo $IAM_ROLE
+
+resultado : eksctl-devops25-nodegroup-ng-26db-NodeInstanceRole-1S44WTAHVE7G7
+
+cat scaling/eks-autoscaling-policy.json
+
+politicas aws:
+
+aws iam put-role-policy \
+    --role-name $IAM_ROLE \
+    --policy-name $NAME-AutoScaling \
+    --policy-document file://scaling/eks-autoscaling-policy.json
+
+
+instalar Cluster Autoscaler Helm Chart .
+
+helm install aws-cluster-autoscaler \
+      autoscaler/cluster-autoscaler \
+    --namespace kube-system \
+    --set autoDiscovery.clusterName=$NAME \
+    --set awsRegion=$AWS_DEFAULT_REGION \
+    --set sslCertPath=/etc/kubernetes/pki/ca.crt \
+    --set rbac.create=true
+
+
+helm repo add autoscaler https://kubernetes.github.io/autoscaler
+Luego, para buscar el chart de cluster-autoscaler, puedes usar el comando:
+
+sql
+Copy code
+helm search repo autoscaler/cluster-autoscaler --devel
+
+kubectl -n kube-system \
+    rollout status \
+    deployment aws-cluster-autoscaler
+
+COMENZAR:
+
+kubectl get nodes
+
+kubectl apply \
+    -f scaling/go-demo-5-many.yml \
+    --record
+
+kubectl -n go-demo-5 get hpa
+
+

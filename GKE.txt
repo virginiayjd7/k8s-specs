@@ -1,0 +1,78 @@
+######################
+# Create The Cluster #
+######################
+gcloud auth revoke --all
+
+gcloud auth login
+gcloud config set project circular-music-417315
+
+#https://stackoverflow.com/questions/63079378/deployed-wrong-app-to-google-cloud-how-to-prevent
+
+REGION=us-central1-a
+MACHINE_TYPE=n1-standard-1
+
+gcloud services enable container.googleapis.com
+#ERROR: (gcloud.container.clusters.create) ResponseError: code=403, message=Kubernetes Engine API has not been used in project circular-music-417315 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/container.googleapis.com/overview?project=circular-music-417315 then retry. If you enabled this API recently, wait a few minutes for the action to propagate to our systems and retry.
+#https://stackoverflow.com/questions/53420870/keep-getting-permissions-error-gcloud-container-clusters-get-credentials
+
+gcloud container clusters \
+    create devops25 \
+    --region $REGION \
+    --machine-type $MACHINE_TYPE \
+    --enable-autoscaling \
+    --num-nodes 1 \
+    --max-nodes 3 \
+    --min-nodes 1
+
+kubectl create clusterrolebinding \
+    cluster-admin-binding \
+    --clusterrole cluster-admin \
+    --user $(gcloud config get-value account)
+
+#######################
+# Destroy the cluster #
+#######################
+
+gcloud container clusters \
+    delete devops25 \
+    --region $REGION \
+    --quiet
+REGION=us-central1-a
+gcloud container clusters delete devops25 --region $REGION --quiet
+
+10010  gcloud auth login
+10011  gcloud container clusters get-credentials devops25 --zone us-central1-a --project circular-music-417315
+10012  cat go-demo-5-many.yml
+10015  kubectl apply -f scaling/go-demo-5-many.yml
+10020  kubectl -n go-demo-5 get hpa
+10021  kubectl get pod
+10024  kubectl -n go-demo-5 get hpa 
+10025  kubectl  get hpa -n go-demo-5
+10026  kubectl  get hpa --namespace  go-demo-5
+10027  kubectl  get pod -n  go-demo-5
+10028  kubectl describe pod -n  api-756b75f4d8-zvtfl
+10029  kubectl describe pod   api-756b75f4d8-zvtfl -n go-demo-5
+10035  kubectl  get pod -n  go-demo-5
+10036  kubectl -n go-demo-5 get hpa
+10037  kubectl  get hpa -n  go-demo-5
+10038  kubectl create clusterrolebinding \\n    cluster-admin-binding \\n    --clusterrole cluster-admin \\n    --user $(gcloud config get-value account)
+10039  kubectl  get hpa -n  go-demo-5
+10040  kubectl apply -f scaling/go-demo-5-many.yml
+10041  kubectl -n go-demo-5 get hpa
+10042  kubectl -n go-demo-5 get pods
+10043  kubectl -n go-demo-5 get hpa
+10044  kubectl -n kube-system get cm cluster-autoscaler-status -o yaml
+10047  kubectl -n go-demo-5 describe pods -l app=api |grep cluster-autoscaler 
+10048  kubectl get nodes
+10049  kubectl -n go-demo-5 get hpa
+10050  kubectl -n go-demo-5 get pods
+10051  kubectl -n go-demo-5 get hpa
+10052  kubectl get nodes
+10053  kubectl -n kube-system get cm cluster-autoscaler-status -o yaml
+10054  kubectl apply -f scaling/go-demo-5.yml 
+10055  kubectl -n go-demo-5 get hpa
+10056  kubectl -n go-demo-5 rollout status deploy api
+10057  kubectl -n go-demo-5 get pods
+10058  kubectl get nodes
+10059  kubectl -n kube-system get cm cluster-autoscaler-status -o yaml
+10060  kubectl get nodes
